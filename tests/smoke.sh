@@ -579,6 +579,29 @@ test_install_fzf_download() {
 }
 
 # ---------------------------------------------------------------------------------------------------------------
+# Example templates
+
+test_examples_shape() {
+  local f
+  assert_eq 12 "$(example_count)" "example count"
+  for f in "$root"/examples/*/*; do
+    [[ "$(head -n1 "$f")" == "# "?* ]] || flunk "$f: line 1 isn't a \"# \" description"
+    if grep -q $'\r' "$f"; then flunk "$f has Windows line endings"; fi
+  done
+}
+
+test_examples_commands_parse() {
+  local f
+  for f in "$root"/examples/commands/*.sh; do
+    bash -n "$f" || flunk "$f doesn't parse"
+  done
+}
+
+test_examples_nothing_personal() {
+  assert_eq "" "$(grep -rilE 'oriolus|iqua|tiles|jira|@explore|/home/' "$root/examples" || true)"
+}
+
+# ---------------------------------------------------------------------------------------------------------------
 # Runner
 
 tmp_root="$(mktemp -d)"

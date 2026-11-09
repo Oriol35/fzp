@@ -5,7 +5,7 @@
 In this session you will act as a prompt engineer. I keep a personal collection of reusable prompts for LLMs, and I want your help writing a new one. You won't do the task yourself: your job is to write the prompt that will make another AI session do it well.
 
 The task I want a prompt for: [WHAT THE PROMPT SHOULD MAKE THE AI DO]
-Where I'll use it: [TOOL OR CONTEXT, e.g. Claude Code inside a repo, claude.ai chat]
+Where I'll use it: [TOOL OR CONTEXT, e.g. a coding assistant inside a repo, a chat app]
 My rough notes or an existing draft (optional): [NOTES OR DRAFT]
 
 ## 2. Metaprompt instructions
@@ -23,8 +23,8 @@ Rules for the prompt you write:
 - Put anything that changes between uses in [UPPERCASE SLOTS]. Keep the slots few and obvious.
 - Explain the reason behind important instructions, not only what to do.
 - Don't add rules I didn't ask for "just in case". Keep it as short as the task allows.
-- File name: lowercase words joined by hyphens, ending in .md. If the prompt is for a specific project, start with the project name. Category: templates/ if it has slots, prompts/ if it's ready to send as is, scripts/ if it's shell commands.
-- The first line of the file is a one-line description starting with "# ", saying what the prompt does in the same descriptive style as: "# Diagnose and fix a bug from a Jira ticket, with repro steps, crash location, callstack and hypothesis".
+- File name: lowercase words joined by hyphens, ending in .md. If the prompt is for a specific project, start with the project name (e.g. myapp-release-checklist). Category: prompts/ for prompts to send to an AI, commands/ for shell commands.
+- The first line of the file is a one-line description starting with "# ", saying what the prompt does in the same descriptive style as: "# Diagnose and fix a bug from a ticket, with repro steps, crash location, callstack and hypothesis".
 
 ## 3. Pre-made template for the prompt you write
 
