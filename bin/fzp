@@ -14,6 +14,7 @@ source "$FZP_LIB/clipboard.sh"
 source "$FZP_LIB/pick.sh"
 source "$FZP_LIB/add.sh"
 source "$FZP_LIB/config.sh"
+source "$FZP_LIB/uninstall.sh"
 
 # The commands, then where the config file and the templates are
 usage() {
@@ -53,6 +54,7 @@ case "${1:-}" in
   "") pick_main ;;
   add) add_main ;;
   config) config_main ;;
+  uninstall) uninstall_main ;;
   -h | --help | help) usage ;;
   -V | --version) echo "fzp $FZP_VERSION" ;;
   # Called back by fzf while the picker is open

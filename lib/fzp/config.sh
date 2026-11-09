@@ -5,9 +5,6 @@
 
 config_nothing() { echo " Nothing was changed."; }
 
-ok_line() { printf '\e[32m ✓\e[0m %s\n' "$*"; }
-warn_line() { printf '\e[33m ⚠\e[0m %s\n' "$*"; }
-
 # Writes the config file pointing at $1 and creates that folder when needed
 save_config() {
   write_config "$1"

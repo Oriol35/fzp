@@ -433,6 +433,55 @@ test_config_without_terminal() {
 }
 
 # ---------------------------------------------------------------------------------------------------------------
+# fzp uninstall
+
+# What an install leaves in ~: fzp, its code, a private fzf, completion, the PATH line, config and templates
+make_fake_install() {
+  mkdir -p "$HOME/.local/bin" "$HOME/.local/lib/fzp" "$HOME/.local/share/bash-completion/completions"
+  cp "$root/bin/fzp" "$HOME/.local/bin/fzp"
+  cp "$root"/lib/fzp/*.sh "$HOME/.local/lib/fzp/"
+  printf '#!/bin/sh\n' >"$HOME/.local/lib/fzp/fzf"
+  cp "$root/share/bash-completion/completions/fzp" "$HOME/.local/share/bash-completion/completions/fzp"
+  printf '%s\n' 'export A=1' '# Added by the fzp installer' 'export PATH="$HOME/.local/bin:$PATH"' 'export B=2' \
+    >"${1:-$HOME/.bashrc}"
+  write_raw_config 'templates_dir = ~/t'
+  mkdir -p "$HOME/t/a" && printf '# x\ny\n' >"$HOME/t/a/x.md"
+}
+
+test_uninstall_defaults() {
+  make_fake_install
+  local out
+  out="$("$root/bin/fzp" uninstall </dev/null)"
+  assert_no_file "$HOME/.local/bin/fzp"
+  assert_no_file "$HOME/.local/lib/fzp"
+  assert_no_file "$HOME/.local/lib"
+  assert_no_file "$HOME/.local/share/bash-completion"
+  assert_file "$HOME/.local/bin"
+  assert_eq $'export A=1\nexport B=2' "$(<"$HOME/.bashrc")" ".bashrc"
+  assert_file "$HOME/.bashrc.fzp-backup"
+  assert_file "$HOME/.config/fzp/config"
+  assert_file "$HOME/t/a/x.md"
+  assert_contains "$out" "~/.config/fzp/config"
+  assert_contains "$out" "~/t (1 template)"
+}
+
+test_uninstall_bashrc_symlink() {
+  mkdir -p "$HOME/dotfiles"
+  make_fake_install "$HOME/dotfiles/bashrc"
+  ln -s "$HOME/dotfiles/bashrc" "$HOME/.bashrc"
+  "$root/bin/fzp" uninstall </dev/null >/dev/null
+  [[ -L "$HOME/.bashrc" ]] || flunk ".bashrc isn't a symlink any more"
+  assert_eq $'export A=1\nexport B=2' "$(<"$HOME/dotfiles/bashrc")" "dotfiles/bashrc"
+}
+
+test_uninstall_leaves_other_fzp() {
+  mkdir -p "$HOME/.local/bin"
+  printf '#!/bin/sh\necho another tool\n' >"$HOME/.local/bin/fzp"
+  "$root/bin/fzp" uninstall </dev/null >/dev/null
+  assert_file "$HOME/.local/bin/fzp"
+}
+
+# ---------------------------------------------------------------------------------------------------------------
 # Runner
 
 tmp_root="$(mktemp -d)"

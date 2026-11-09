@@ -16,6 +16,10 @@ trim() {
   printf '%s' "${s%"${s##*[![:space:]]}"}"
 }
 
+# A done step, and a warning
+ok_line() { printf '\e[32m ✓\e[0m %s\n' "$*"; }
+warn_line() { printf '\e[33m ⚠\e[0m %s\n' "$*"; }
+
 # "1 template", "3 templates"
 plural() { if (( $1 == 1 )); then echo "1 $2"; else echo "$1 $2s"; fi; }
 
