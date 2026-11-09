@@ -23,9 +23,8 @@ EOF
 }
 
 load_config
-# Not while fzf calls back into fzp, where it would land in the middle of the screen, nor for
-# `fzp config`, which offers to fix the file instead
-[[ "${1:-}" == _* || "${1:-}" == config ]] || warn_config
+# Not while fzf calls back into fzp, where it would land in the middle of the screen
+[[ "${1:-}" == _* ]] || warn_config
 
 case "${1:-}" in
   "" | add) command -v fzf >/dev/null || { echo "fzp: fzf is required." >&2; exit 1; } ;;

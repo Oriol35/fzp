@@ -11,14 +11,14 @@ root="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
 # ---------------------------------------------------------------------------------------------------------------
 # Helpers
 
-fail() { printf '    %s\n' "$@" >&2; return 1; }
-assert_eq() { [[ "$1" == "$2" ]] || fail "${3:-value}: expected [$1]" "got      [$2]"; }
-assert_contains() { [[ "$1" == *"$2"* ]] || fail "expected to find [$2] in:" "$1"; }
-assert_not_contains() { [[ "$1" != *"$2"* ]] || fail "expected not to find [$2] in:" "$1"; }
-assert_file() { [[ -e "$1" || -L "$1" ]] || fail "missing: $1"; }
-assert_no_file() { [[ ! -e "$1" && ! -L "$1" ]] || fail "should not exist: $1"; }
+flunk() { printf '    %s\n' "$@" >&2; return 1; }
+assert_eq() { [[ "$1" == "$2" ]] || flunk "${3:-value}: expected [$1]" "got      [$2]"; }
+assert_contains() { [[ "$1" == *"$2"* ]] || flunk "expected to find [$2] in:" "$1"; }
+assert_not_contains() { [[ "$1" != *"$2"* ]] || flunk "expected not to find [$2] in:" "$1"; }
+assert_file() { [[ -e "$1" || -L "$1" ]] || flunk "missing: $1"; }
+assert_no_file() { [[ ! -e "$1" && ! -L "$1" ]] || flunk "should not exist: $1"; }
 # Ends the current test as skipped
-skip() { echo "$1"; exit 200; }
+skip_test() { echo "$1"; exit 200; }
 
 # A stand-in command $1 in the sandbox's stubs folder, running the bash code $2
 stub() {
@@ -59,6 +59,87 @@ test_help_runs() {
   local out
   out="$("$root/bin/fzp" help)"
   assert_contains "$out" "fzp add"
+}
+
+# ---------------------------------------------------------------------------------------------------------------
+# Config
+
+# Writes the config file, one argument per line
+write_raw_config() {
+  mkdir -p "$HOME/.config/fzp"
+  printf '%s\n' "$@" >"$HOME/.config/fzp/config"
+}
+
+test_config_default() {
+  load_fzp
+  load_config
+  assert_eq "$HOME/.local/share/fzp" "$templates_dir" templates_dir
+  assert_eq 0 "${#config_problems[@]}" problems
+}
+
+test_config_reads_templates_dir() {
+  write_raw_config '# comment' '' 'templates_dir = ~/My Templates/'
+  load_fzp
+  load_config
+  assert_eq "$HOME/My Templates" "$templates_dir"
+  assert_eq 0 "${#config_problems[@]}" problems
+}
+
+test_config_relative_is_from_home() {
+  write_raw_config 'templates_dir = notes'
+  load_fzp
+  cd /tmp
+  load_config
+  assert_eq "$HOME/notes" "$templates_dir"
+}
+
+test_config_ignores_env() {
+  mkdir -p "$HOME/other"
+  printf 'templates_dir = /tmp/elsewhere\n' >"$HOME/other/config"
+  export FZP_TEMPLATES_DIR=/tmp/x FZP_CONFIG="$HOME/other/config"
+  load_fzp
+  load_config
+  assert_eq "$HOME/.local/share/fzp" "$templates_dir"
+  assert_eq "$HOME/.config/fzp/config" "$config_file"
+}
+
+test_config_problems() {
+  write_raw_config 'colour = red' 'templates_dir ='
+  load_fzp
+  load_config
+  assert_eq 2 "${#config_problems[@]}" problems
+  assert_contains "${config_problems[0]}" '"colour"'
+  assert_contains "${config_problems[0]}" '.config/fzp/config'
+  assert_contains "${config_problems[1]}" 'templates_dir'
+  assert_contains "${config_problems[1]}" 'empty'
+  assert_contains "${config_problems[1]}" '.config/fzp/config'
+  assert_eq "$HOME/.local/share/fzp" "$templates_dir" "fallback"
+}
+
+test_write_config_roundtrip() {
+  load_fzp
+  load_config
+  write_config "$HOME/a b"
+  assert_contains "$(<"$HOME/.config/fzp/config")" 'templates_dir = ~/a b'
+  load_config
+  assert_eq "$HOME/a b" "$templates_dir"
+  assert_eq 0 "${#config_problems[@]}" problems
+}
+
+test_ask_default_without_terminal() {
+  load_fzp
+  local status=0
+  ask "Q?" y </dev/null || status=$?
+  assert_eq 0 "$status" "default yes"
+  status=0
+  ask "Q?" n </dev/null || status=$?
+  assert_eq 1 "$status" "default no"
+}
+
+test_no_legacy_words() {
+  local found
+  found="$(grep -rnE 'FZP_CONFIG|FZP_TEMPLATES_DIR|old_settings|older fzp|"library"|"height"' "$root/bin" "$root/lib" || true)"
+  assert_eq "" "$found"
 }
 
 # ---------------------------------------------------------------------------------------------------------------

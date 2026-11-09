@@ -1,5 +1,14 @@
-# Shared by `fzp` and `fzp add`: settings, the templates folder, the clipboard, the fzf look,
-# full-screen handling and the preview. Sourced by bin/fzp, not run on its own.
+# Shared by every fzp command and by the installer: where things are installed, the settings, prompts, the
+# templates folder, the fzf look, full-screen handling and the preview. Sourced, not run on its own.
+
+# Where the installer puts fzp, for this user
+install_bin="$HOME/.local/bin/fzp"
+install_lib="$HOME/.local/lib/fzp"
+install_completion="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/fzp"
+bashrc_file="$HOME/.bashrc"
+# The line above the PATH line the installer adds to ~/.bashrc, so it can be found and removed again
+bashrc_marker='# Added by the fzp installer'
+default_templates_dir="${XDG_DATA_HOME:-$HOME/.local/share}/fzp"
 
 trim() {
   local s="$1"
@@ -7,54 +16,94 @@ trim() {
   printf '%s' "${s%"${s##*[![:space:]]}"}"
 }
 
-# "~" at the start of a path means the home folder, and is shown that way
-expand_home() {
-  if [[ "$1" == "~" || "$1" == "~/"* ]]; then printf '%s' "$HOME${1:1}"; else printf '%s' "$1"; fi
-}
+# The home folder is shown as "~"
 shorten_home() {
   if [[ "$1" == "$HOME" || "$1" == "$HOME/"* ]]; then printf '~%s' "${1#"$HOME"}"; else printf '%s' "$1"; fi
 }
 
-# Settings: built-in defaults, then the config file ("key = value" lines, read as text and never
-# run), then the FZP_TEMPLATES_DIR environment variable. Settings from older fzp versions still
-# work; they're listed in old_settings so fzp can suggest updating the file.
-load_config() {
-  local key value old_dir=""
-  config_file="${FZP_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/fzp/config}"
-  templates_dir="${XDG_DATA_HOME:-$HOME/.local/share}/fzp"
-  old_settings=()
-  unknown_settings=()
-  if [[ -f "$config_file" ]]; then
-    while IFS='=' read -r key value || [[ -n "$key" ]]; do
-      key="$(trim "$key")"
-      value="$(trim "${value:-}")"
-      case "$key" in
-        '' | '#'*) ;;
-        templates_dir) templates_dir="$value" ;;
-        # Old name of templates_dir
-        library) old_dir="$value"; old_settings+=("$key") ;;
-        # Removed: fzp is always full screen
-        height) old_settings+=("$key") ;;
-        *) unknown_settings+=("$key") ;;
-      esac
-    done <"$config_file"
-    # templates_dir wins when the file has both names
-    grep -qE '^[[:space:]]*templates_dir[[:space:]]*=' "$config_file" || templates_dir="${old_dir:-$templates_dir}"
+# A folder as fzp keeps it: "~" means the home folder, a relative path starts from the home folder (not from
+# wherever fzp is run), and "..", "//" and a trailing "/" are tidied up. Symlinks are kept as they are.
+normalize_dir() {
+  local dir="$1"
+  if [[ "$dir" == "~" || "$dir" == "~/"* ]]; then
+    dir="$HOME${dir:1}"
+  elif [[ "$dir" != /* ]]; then
+    dir="$HOME/$dir"
   fi
-  # What the config file says (or the default), before the environment variable
-  templates_dir_setting="$(expand_home "$templates_dir")"
-  templates_dir="$(expand_home "${FZP_TEMPLATES_DIR:-$templates_dir}")"
+  realpath -ms -- "$dir"
 }
 
-# Points out settings fzp doesn't use, so a typo or an outdated config file doesn't go unnoticed
+# Reads the config file: "key = value" lines, read as text and never run. Sets config_file, templates_dir
+# (the default when the file doesn't set it) and config_problems, the messages about lines fzp can't use.
+load_config() {
+  local line key value n=0 where
+  config_file="${XDG_CONFIG_HOME:-$HOME/.config}/fzp/config"
+  templates_dir="$default_templates_dir"
+  config_problems=()
+  [[ -f "$config_file" ]] || return 0
+  where="$(shorten_home "$config_file")"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    n=$((n + 1))
+    line="$(trim "$line")"
+    [[ -z "$line" || "$line" == '#'* ]] && continue
+    key="$(trim "${line%%=*}")"
+    value=""
+    [[ "$line" == *=* ]] && value="$(trim "${line#*=}")"
+    case "$key" in
+      templates_dir)
+        if [[ -n "$value" ]]; then
+          templates_dir="$(normalize_dir "$value")"
+        else
+          config_problems+=("\"templates_dir\" is empty in $where (line $n), so the default folder is used")
+        fi ;;
+      *) config_problems+=("ignoring unknown setting \"$key\" in $where (line $n)") ;;
+    esac
+  done <"$config_file"
+}
+
+# Points out config lines fzp can't use, so a typo doesn't go unnoticed
 warn_config() {
-  local key
-  if (( ${#old_settings[@]} )); then
-    echo "fzp: your config file $(shorten_home "$config_file") is from an older fzp. Run \"fzp config\" to update it." >&2
-  fi
-  for key in "${unknown_settings[@]}"; do
-    echo "fzp: ignoring unknown setting \"$key\" in $(shorten_home "$config_file")" >&2
+  local problem
+  for problem in "${config_problems[@]}"; do
+    echo "fzp: $problem" >&2
   done
+}
+
+# Writes the config file (load_config sets where) with $1 as the templates folder
+write_config() {
+  mkdir -p "$(dirname "$config_file")"
+  printf '%s\n' '# FuzzyPaste settings: one "key = value" per line, no quotes needed.' '' \
+    '# Folder holding the templates; each subfolder is a category' \
+    "templates_dir = $(shorten_home "$1")" >"$config_file"
+}
+
+# Yes/no question; $2 is the answer Enter gives (y or n). Returns 0 for yes, 1 for no and 2 when the user
+# presses Ctrl-D. Without a terminal it returns the default answer without asking.
+ask() {
+  local answer hint="[Y/n]"
+  [[ "$2" == n ]] && hint="[y/N]"
+  if [[ ! -t 0 ]]; then
+    [[ "$2" == y ]]
+    return
+  fi
+  read -r -p " $1 $hint " answer || { echo; return 2; }
+  [[ "${answer:-$2}" == [yY]* ]]
+}
+
+# Asks for the templates folder, prefilled with $1, and sets answer_dir to it (as normalize_dir keeps it).
+# Fails when the user presses Ctrl-D. Without a terminal it takes $1.
+ask_folder() {
+  local dir=""
+  if [[ ! -t 0 ]]; then
+    answer_dir="$(normalize_dir "$1")"
+    return 0
+  fi
+  while [[ -z "$dir" ]]; do
+    read -r -e -i "$(shorten_home "$1")" \
+      -p $'\001\e[1;36m\002 Templates folder:\001\e[0m\002 ' dir || { echo; return 1; }
+    dir="$(trim "$dir")"
+  done
+  answer_dir="$(normalize_dir "$dir")"
 }
 
 # Number of templates in the templates folder $1
