@@ -152,6 +152,10 @@ strip_hashes() { sed 's/^#\+ *//'; }
 # A template's description: its first line, without the leading "#"s or a Windows line ending
 template_description() { head -n1 "$1" | sed 's/\r$//' | strip_hashes; }
 
+# A template's body, the part fzp copies: everything after the description line and the blank lines right
+# after it, byte for byte (a line holding only a Windows line ending counts as blank)
+template_body() { tail -n +2 "$1" | sed $'/[^\r]/,$!d'; }
+
 # For fzp add, which mixes fzf screens with plain terminal prompts: take over the whole terminal
 # like vim does for all its steps, and give the previous contents back on exit. (fzf does this by
 # itself for the picker; --height=100% would too, but switches back after each step.)
@@ -169,9 +173,24 @@ leave_screen() {
   in_screen=0
 }
 
-# The fzf look both commands share; callers add their own labels, keys and preview
+# fzp needs fzf 0.67 or newer. Returns 0 when the fzf at $1 accepts every option and action fzp uses
+# (an older one exits with status 2); otherwise prints fzf's complaint and fails.
+fzf_check() {
+  local status=0 error
+  error="$("$1" --filter=x --style=full --footer=x --footer-label=x --freeze-left=1 --gutter=x \
+    --ghost=x --no-input --list-label=x --input-label=x --header-first --info=inline-right \
+    --tabstop=1 --no-clear --layout=reverse-list --with-shell=x \
+    --bind 'tab:transform-footer(echo),alt-enter:print-query,change:refresh-preview' \
+    </dev/null 2>&1 >/dev/null)" || status=$?
+  (( status <= 1 )) && return 0
+  printf '%s\n' "${error:-$1 exited with status $status}"
+  return 1
+}
+
+# The fzf look every command shares; callers add their own labels, keys and preview. fzf runs the
+# callbacks with bash, whatever the user's shell is.
 fzf_ui() {
-  fzf --ansi --style=full --layout=reverse-list --header-first \
+  "$fzp_fzf" --with-shell 'bash -c' --ansi --style=full --layout=reverse-list --header-first \
     --pointer='▌' --gutter=' ' --prompt='› ' --preview-window='right,55%,noinfo' \
     --color='label:bold:cyan,pointer:cyan,hl:magenta:underline,hl+:bold:magenta:underline,ghost:dim' \
     "$@"
@@ -201,8 +220,10 @@ word_wrap() {
 # Marks every case-insensitive occurrence of the fzf query's words ($1) in bold underlined magenta,
 # then switches back to the line's own style ($2). Negated (!word) and | terms are skipped.
 highlight() {
-  "$fzp_awk" -v q="$1" -v base="$2" '
+  # Through the environment, as awk -v would treat backslashes in the query as escapes
+  q="$1" base="$2" "$fzp_awk" '
     BEGIN {
+      q = ENVIRON["q"]; base = ENVIRON["base"]
       IGNORECASE = 1
       n = split(q, terms, " ")
       for (i = 1; i <= n; i++) {
@@ -230,8 +251,8 @@ highlight() {
 render_preview() {
   local width=$(( ${FZF_PREVIEW_COLUMNS:-80} - 1 )) query="${2:-}"
   echo
-  head -n1 "$1" | strip_hashes | word_wrap "$width" | highlight "$query" $'\e[1;36m' |
+  template_description "$1" | word_wrap "$width" | highlight "$query" $'\e[1;36m' |
     sed $'s/.*/\e[1;36m&\e[0m/'
   echo
-  tail -n +2 "$1" | sed '/./,$!d' | word_wrap "$width" | highlight "$query" ''
+  template_body "$1" | word_wrap "$width" | highlight "$query" ''
 }

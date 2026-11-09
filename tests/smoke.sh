@@ -240,6 +240,67 @@ test_clipboard_none() {
 }
 
 # ---------------------------------------------------------------------------------------------------------------
+# Picker
+
+# Copies the template made of the bytes $1 and compares the clipboard with the bytes $2
+check_copy() {
+  export WAYLAND_DISPLAY=w
+  load_fzp
+  printf "$1" >"$HOME/template.md"
+  copy_template "$HOME/template.md"
+  printf "$2" | cmp - "$HOME/clipboard"
+}
+
+test_copy_template_exact() { check_copy '# d\n\n\nbody\n\n\n' 'body\n\n\n'; }
+test_copy_template_no_final_newline() { check_copy '# d\nlast' 'last'; }
+test_copy_template_crlf() { check_copy '# d\r\n\r\nx\r\n' 'x\r\n'; }
+
+test_tabs_with_spaces() {
+  load_fzp
+  mkdir -p "$HOME/t/My Prompts" "$HOME/t/cmds" && cd "$HOME/t"
+  FZP_TAB="$HOME/tab"
+  echo "My Prompts" >"$FZP_TAB"
+  local out
+  out="$(tabs)"
+  assert_contains "$out" $'46m My Prompts \e[0m'
+  assert_not_contains "$out" ' My '$'\e[0m'
+}
+
+test_cycle_with_spaces() {
+  load_fzp
+  mkdir -p "$HOME/t/a b" "$HOME/t/c" && cd "$HOME/t"
+  FZP_TAB="$HOME/tab"
+  echo all >"$FZP_TAB"
+  cycle 1
+  assert_eq "a b" "$(<"$FZP_TAB")"
+  cycle 1
+  assert_eq c "$(<"$FZP_TAB")"
+  cycle 1
+  assert_eq all "$(<"$FZP_TAB")"
+  cycle -1
+  assert_eq c "$(<"$FZP_TAB")"
+}
+
+test_fzf_check() {
+  load_fzp
+  fzf_check fzf
+  stub_old_fzf
+  local out status=0
+  out="$(fzf_check fzf)" || status=$?
+  assert_eq 1 "$status" status
+  assert_contains "$out" freeze-left
+}
+
+test_fzf_missing_message() {
+  rm "$HOME/stubs/fzf"
+  mkdir -p "$HOME/.local/share/fzp/a" && printf '# x\ny\n' >"$HOME/.local/share/fzp/a/x.md"
+  local out status=0
+  out="$("$root/bin/fzp" 2>&1)" || status=$?
+  assert_eq 1 "$status" status
+  assert_contains "$out" "Run the fzp installer again"
+}
+
+# ---------------------------------------------------------------------------------------------------------------
 # Runner
 
 tmp_root="$(mktemp -d)"

@@ -27,8 +27,15 @@ load_config
 # Not while fzf calls back into fzp, where it would land in the middle of the screen
 [[ "${1:-}" == _* ]] || warn_config
 
+# The fzf the installer downloaded when the system's was missing or too old, else the system's
+fzp_fzf=fzf
+for f in "$FZP_LIB/fzf" "$install_lib/fzf"; do
+  [[ -x "$f" ]] && { fzp_fzf="$f"; break; }
+done
 case "${1:-}" in
-  "" | add) command -v fzf >/dev/null || { echo "fzp: fzf is required." >&2; exit 1; } ;;
+  "" | add)
+    command -v "$fzp_fzf" >/dev/null ||
+      { echo "fzp: fzf isn't installed. Run the fzp installer again: it can set one up." >&2; exit 1; } ;;
 esac
 
 case "${1:-}" in

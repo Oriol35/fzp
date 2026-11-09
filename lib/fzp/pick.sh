@@ -4,9 +4,10 @@
 
 # Category tabs, with the active one highlighted
 tabs() {
-  local active c line=""
+  local active c line="" cats
   active="$(<"$FZP_TAB")"
-  for c in all $(categories); do
+  mapfile -t cats < <(echo all; categories)
+  for c in "${cats[@]}"; do
     if [[ "$c" == "$active" ]]; then
       line+=$'\e[1;30;46m '"$c"$' \e[0m  '
     else
@@ -20,21 +21,23 @@ tabs() {
 # Category and name stay frozen while the description scrolls to the match. Names are padded
 # with U+2800 (braille blank) because fzf trims trailing spaces in frozen fields.
 list() {
-  local active f files=() name width=0 pad category
+  local active f files=() name width=0 cat_width=0 pad category
   active="$(<"$FZP_TAB")"
   while IFS= read -r f; do
     [[ "$active" == all || "$f" == "$active/"* ]] || continue
     files+=("$f")
-    name="$(basename "${f%.*}")"
+    name="$(template_name "$f")"
     (( ${#name} > width )) && width=${#name}
+    category="${f%%/*}"
+    (( ${#category} > cat_width )) && cat_width=${#category}
   done < <(template_files)
   for f in "${files[@]}"; do
-    name="$(basename "${f%.*}")"
+    name="$(template_name "$f")"
     printf -v pad '%*s' $(( width + 2 - ${#name} )) ''
     pad="${pad// /$'\xe2\xa0\x80'}"
     category=""
-    [[ "$active" == all ]] && printf -v category '\e[36m%-10s\e[0m' "${f%%/*}"
-    printf '%s\t%s\t%s%s\t\e[2m%s\e[0m\n' "$f" "$category" "$name" "$pad" "$(head -n1 "$f" | strip_hashes)"
+    [[ "$active" == all ]] && printf -v category '\e[36m%-*s\e[0m' $(( cat_width + 2 )) "${f%%/*}"
+    printf '%s\t%s\t%s%s\t\e[2m%s\e[0m\n' "$f" "$category" "$name" "$pad" "$(template_description "$f")"
   done
 }
 
@@ -47,8 +50,11 @@ cycle() {
   echo "${cats[(i + $1 + ${#cats[@]}) % ${#cats[@]}]}" >"$FZP_TAB"
 }
 
+# Copies template $1's body to the clipboard
+copy_template() { template_body "$1" | copy_to_clipboard; }
+
 pick_main() {
-  local entries switch label choice file
+  local entries switch label choice file status=0
   enter_templates_dir
   export FZP_TAB
   FZP_TAB="$(mktemp)"
@@ -56,10 +62,10 @@ pick_main() {
   echo all >"$FZP_TAB"
 
   entries="$(list)"
-  [[ -n "$entries" ]] || { echo "fzp: no templates in $templates_dir yet. \"fzp add\" saves one." >&2; exit 1; }
+  [[ -n "$entries" ]] || { echo "fzp: no templates in $(shorten_home "$templates_dir") yet. \"fzp add\" saves one." >&2; exit 1; }
 
   switch="reload($FZP_SELF _list)+transform-footer($FZP_SELF _tabs)+first"
-  label='transform-preview-label:f={1}; echo " ${f%.*} "'
+  label='transform-preview-label:f={1}; n=${f##*/}; echo " ${f%/*}/${n%.*} "'
 
   # Top to bottom: category tabs, list, search input, key hints
   choice="$(fzf_ui --delimiter='\t' --with-nth=2.. --freeze-left=2 --tabstop=1 --info=inline-right \
@@ -69,10 +75,15 @@ pick_main() {
     --bind "focus:$label" --bind "result:$label" --bind 'change:refresh-preview' \
     --bind "tab:execute-silent($FZP_SELF _cycle 1)+$switch" \
     --bind "shift-tab:execute-silent($FZP_SELF _cycle -1)+$switch" \
-    <<<"$entries")" || exit 0
+    <<<"$entries")" || status=$?
+  case "$status" in
+    0) ;;
+    # Nothing matched, or Esc / Ctrl-C
+    1 | 130) exit 0 ;;
+    *) echo "fzp: fzf failed (status $status)." >&2; exit "$status" ;;
+  esac
 
   file="${choice%%$'\t'*}"
-  # Drop the description line and any blank lines right after it
-  tail -n +2 "$file" | sed '/./,$!d' | copy_to_clipboard
-  echo "Copied '${file%.*}' to clipboard."
+  copy_template "$file"
+  echo "Copied '${file%/*}/$(template_name "$file")' to the clipboard."
 }
