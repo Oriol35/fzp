@@ -1,0 +1,16 @@
+# Tab completion for fzp in bash. bash-completion loads this file by itself the first time Tab is
+# pressed after `fzp`: from here when fzp is reached through PATH (bin/ next to this share/ folder),
+# or from ~/.local/share/bash-completion/completions/fzp.
+
+_fzp() {
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  COMPREPLY=()
+  # Only the first word after fzp is a command; none of them take arguments
+  (( COMP_CWORD == 1 )) || return 0
+  if [[ "$cur" == -* ]]; then
+    COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
+  else
+    COMPREPLY=($(compgen -W "add config help" -- "$cur"))
+  fi
+}
+complete -F _fzp fzp

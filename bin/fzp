@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# FuzzyPaste: copy LLM prompt templates to the clipboard, and add new ones.
+set -euo pipefail
+
+FZP_LIB="$(dirname "$(realpath "$0")")/../lib/fzp"
+# How fzf calls back into this script (tabs, list reloads, preview)
+FZP_SELF="$(printf '%q' "$(realpath "$0")")"
+
+source "$FZP_LIB/common.sh"
+source "$FZP_LIB/pick.sh"
+source "$FZP_LIB/add.sh"
+source "$FZP_LIB/config.sh"
+
+usage() {
+  cat <<'EOF'
+FuzzyPaste: copy LLM prompt templates to the clipboard.
+
+  fzp          pick a template and copy it
+  fzp add      save a new template into a category
+  fzp config   show the settings, change the templates folder
+  fzp help     show this help (also -h, --help)
+EOF
+}
+
+load_config
+# Not while fzf calls back into fzp, where it would land in the middle of the screen, nor for
+# `fzp config`, which offers to fix the file instead
+[[ "${1:-}" == _* || "${1:-}" == config ]] || warn_config
+
+case "${1:-}" in
+  "" | add) command -v fzf >/dev/null || { echo "fzp: fzf is required." >&2; exit 1; } ;;
+esac
+
+case "${1:-}" in
+  "") pick_main ;;
+  add) add_main ;;
+  config) config_main ;;
+  -h | --help | help) usage ;;
+  # Called back by fzf while the picker is open
+  _list) enter_templates_dir; list ;;
+  _tabs) enter_templates_dir; tabs ;;
+  _cycle) enter_templates_dir; cycle "$2" ;;
+  _preview) render_preview "$2" "${3:-}" ;;
+  *) usage >&2; exit 1 ;;
+esac
