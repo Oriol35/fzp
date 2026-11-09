@@ -49,6 +49,16 @@ move_templates() {
   fi
 }
 
+# True when folders $1 and $2 are the same folder, even under another name (a symlink, or other
+# letter case on a Windows drive), or when one is inside the other
+same_or_nested() {
+  local a b
+  [[ -e "$1" && -e "$2" && "$1" -ef "$2" ]] && return 0
+  a="$(realpath -m -- "$1")/"
+  b="$(realpath -m -- "$2")/"
+  [[ "$a" == "$b"* || "$b" == "$a"* ]]
+}
+
 # Lists the paths on its input, at most 10, indented
 show_some() {
   local lines
@@ -70,6 +80,11 @@ change_config() {
   ask_folder "$old" || { config_nothing; return; }
   new="$answer_dir"
   [[ "$new" != "$old" ]] || { config_nothing; return; }
+  if [[ -e "$new" && "$new" -ef "$old" ]]; then
+    warn_line "$(shorten_home "$new") is the folder you already use, under another name."
+    config_nothing
+    return
+  fi
   if [[ -e "$new" && ! -d "$new" ]]; then
     warn_line "$(shorten_home "$new") is a file, not a folder."
     config_nothing
@@ -77,7 +92,7 @@ change_config() {
   fi
 
   if (( count > 0 )); then
-    if [[ "$new/" == "$old/"* || "$old/" == "$new/"* ]]; then
+    if same_or_nested "$old" "$new"; then
       warn_line "One folder is inside the other, so your templates can't be moved automatically."
     else
       status=0

@@ -380,12 +380,22 @@ test_resolve_category() {
   assert_eq all "$(resolve_category all)" "slug of all (add rejects it)"
 }
 
+# split_file_name "$1" must give the name $2 and the extension $3
+check_split() {
+  split_file_name "$1"
+  assert_eq "$2" "$split_name" "name of [$1]"
+  assert_eq "$3" "$split_ext" "extension of [$1]"
+}
+
 test_split_file_name() {
   load_fzp
-  assert_eq $'deploy-notes\tmd' "$(split_file_name "Deploy Notes")"
-  assert_eq $'backup\tsh' "$(split_file_name backup.SH)"
-  assert_eq $'v1-2-notes\ttxt' "$(split_file_name v1.2.notes.txt)"
-  assert_eq $'name\tmd' "$(split_file_name name.)"
+  check_split "Deploy Notes" deploy-notes md
+  check_split backup.SH backup sh
+  check_split v1.2.notes.txt v1-2-notes txt
+  check_split name. name md
+  check_split "" "" md
+  check_split '!!!' "" md
+  check_split .sh "" sh
 }
 
 test_name_taken() {
@@ -442,6 +452,17 @@ test_move_everything_removes_old() {
   assert_file "$HOME/new/a/one.md"
   assert_no_file "$HOME/old"
   assert_eq "" "$(templates_left_behind "$HOME/new" "$HOME/other")" "nothing would stay behind"
+}
+
+test_same_or_nested_folders() {
+  load_fzp
+  mkdir -p "$HOME/real/a" "$HOME/other"
+  ln -s "$HOME/real" "$HOME/link"
+  same_or_nested "$HOME/real" "$HOME/link" || flunk "a symlink to the same folder"
+  same_or_nested "$HOME/real" "$HOME/real/a" || flunk "a folder inside the other"
+  same_or_nested "$HOME/link/a" "$HOME/real" || flunk "inside the other through a symlink"
+  if same_or_nested "$HOME/real" "$HOME/other"; then flunk "different folders"; fi
+  if same_or_nested "$HOME/real" "$HOME/not-yet"; then flunk "a new folder that doesn't exist yet"; fi
 }
 
 test_config_without_terminal() {
@@ -526,6 +547,7 @@ test_install_fresh() {
   assert_eq 'export A=1' "$(<"$HOME/.bashrc.fzp-backup")" "backup"
   assert_no_file "$HOME/.local/lib/fzp/fzf"
   assert_contains "$(<"$HOME/out")" 'Open a new terminal'
+  assert_contains "$(<"$HOME/out")" 'GNU awk'
 }
 
 test_install_twice() {

@@ -19,15 +19,16 @@ resolve_category() {
   fi
 }
 
-# Splits a typed file name ($1) into name and extension, printed as "name<TAB>ext": the name as
-# lowercase-with-hyphens, the extension lowercase, and "md" when none was typed
+# Splits a typed file name ($1) into split_name, lowercase-with-hyphens (empty when nothing usable
+# is left), and split_ext, lowercase, "md" when none was typed
 split_file_name() {
   local base="$1" ext=""
   if [[ "$1" == *.* ]]; then
     base="${1%.*}"
     ext="$(tr '[:upper:]' '[:lower:]' <<<"${1##*.}" | tr -cd 'a-z0-9')"
   fi
-  printf '%s\t%s\n' "$(slugify <<<"$base")" "${ext:-md}"
+  split_name="$(slugify <<<"$base")"
+  split_ext="${ext:-md}"
 }
 
 # Prints the file in category $1 whose template name is $2, whatever its extension, and fails when
@@ -232,7 +233,8 @@ add_main() {
       --ghost='name, or name.ext' \
       --header="$(hints $'Any plain-text extension works: .md, .txt, .sh, .sql… (.md if you type none)\n↵ confirm  ·  esc cancel, nothing is saved')")" || add_stopped $?
     warning=""
-    IFS=$'\t' read -r name ext < <(split_file_name "$typed")
+    split_file_name "$typed"
+    name="$split_name" ext="$split_ext"
     if [[ -z "$name" ]]; then
       [[ -n "$typed" ]] && warning="\"$typed\" has no usable letters (a-z, 0-9)"
       continue

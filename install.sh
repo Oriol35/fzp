@@ -146,6 +146,12 @@ plan_fzf() {
 }
 
 check_extras() {
+  local tool
+  if "$fzp_awk" --version 2>/dev/null | grep -q 'GNU Awk'; then
+    ok_line "GNU awk"
+  else
+    warn_line "GNU awk isn't installed: search highlights in the preview become case-sensitive, and accented letters can be cut. Install \"gawk\" to fix it."
+  fi
   if tool="$(clipboard_tool)"; then
     ok_line "Clipboard: $tool"
   else
