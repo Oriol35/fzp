@@ -85,11 +85,12 @@ write_config() {
 }
 
 # Yes/no question; $2 is the answer Enter gives (y or n). Returns 0 for yes, 1 for no and 2 when the user
-# presses Ctrl-D. Without a terminal it returns the default answer without asking.
+# presses Ctrl-D. Without a terminal it takes the default answer, and shows it.
 ask() {
   local answer hint="[Y/n]"
   [[ "$2" == n ]] && hint="[y/N]"
   if [[ ! -t 0 ]]; then
+    printf ' %s %s %s\n' "$1" "$hint" "$2"
     [[ "$2" == y ]]
     return
   fi
@@ -103,6 +104,7 @@ ask_folder() {
   local dir=""
   if [[ ! -t 0 ]]; then
     answer_dir="$(normalize_dir "$1")"
+    printf ' Templates folder: %s\n' "$(shorten_home "$answer_dir")"
     return 0
   fi
   while [[ -z "$dir" ]]; do

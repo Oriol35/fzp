@@ -43,13 +43,15 @@ sandbox() {
   cd "$HOME"
 }
 
-# Loads fzp's functions into the test, as bin/fzp would, without WSL detection from this machine
+# Loads fzp's functions into the test, as bin/fzp would, without WSL detection or Windows programs from
+# this machine
 load_fzp() {
   FZP_LIB="$root/lib/fzp"
   FZP_SELF="$root/bin/fzp"
   local f
   for f in "$root"/lib/fzp/*.sh; do source "$f"; done
   fzp_wsl_interop=/nonexistent
+  fzp_windows_system32=/nonexistent
 }
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -266,6 +268,17 @@ test_clipboard_wsl_paste() {
   printf 'a\nb\n' | cmp - "$HOME/pasted"
 }
 
+test_clipboard_wsl_without_windows_path() {
+  export WSL_DISTRO_NAME=Test
+  load_fzp
+  mkdir -p "$HOME/win"
+  mv "$HOME/stubs/clip.exe" "$HOME/win/clip.exe"
+  fzp_windows_system32="$HOME/win"
+  assert_eq "$HOME/win/clip.exe" "$(clipboard_tool)"
+  printf 'x' | copy_to_clipboard
+  printf 'x' | iconv -f UTF-8 -t UTF-16LE | cmp - "$HOME/clipboard"
+}
+
 test_clipboard_none() {
   rm "$HOME/stubs/wl-copy" "$HOME/stubs/clip.exe"
   export WAYLAND_DISPLAY=w WSL_DISTRO_NAME=Test PATH="$HOME/stubs"
@@ -479,6 +492,90 @@ test_uninstall_leaves_other_fzp() {
   printf '#!/bin/sh\necho another tool\n' >"$HOME/.local/bin/fzp"
   "$root/bin/fzp" uninstall </dev/null >/dev/null
   assert_file "$HOME/.local/bin/fzp"
+}
+
+# ---------------------------------------------------------------------------------------------------------------
+# Installer
+
+# Runs the installer from this checkout without a terminal, so every question takes its default
+run_installer() { "$root/install.sh" </dev/null 2>&1; }
+
+# How many example templates the repo ships
+example_count() { find "$root/examples" -mindepth 2 -maxdepth 2 -type f 2>/dev/null | wc -l; }
+
+test_install_fresh() {
+  printf 'export A=1\n' >"$HOME/.bashrc"
+  run_installer >"$HOME/out" || { cat "$HOME/out"; flunk "installer failed"; }
+  assert_file "$HOME/.local/bin/fzp"
+  assert_file "$HOME/.local/lib/fzp/common.sh"
+  assert_file "$HOME/.local/share/bash-completion/completions/fzp"
+  assert_eq "fzp 0.1.0" "$("$HOME/.local/bin/fzp" --version)"
+  assert_contains "$(<"$HOME/.config/fzp/config")" "templates_dir = ~/.local/share/fzp"
+  assert_eq "$(example_count)" "$(find "$HOME/.local/share/fzp" -mindepth 2 -type f | wc -l)" "examples copied"
+  assert_eq 1 "$(grep -c '^# Added by the fzp installer$' "$HOME/.bashrc")" "marker lines"
+  assert_eq 'export A=1' "$(head -n1 "$HOME/.bashrc")"
+  assert_eq 'export A=1' "$(<"$HOME/.bashrc.fzp-backup")" "backup"
+  assert_no_file "$HOME/.local/lib/fzp/fzf"
+  assert_contains "$(<"$HOME/out")" 'Open a new terminal'
+}
+
+test_install_twice() {
+  run_installer >/dev/null
+  write_raw_config 'templates_dir = ~/mine'
+  local out
+  out="$(run_installer)"
+  assert_contains "$out" "Update fzp 0.1.0 to 0.1.0"
+  assert_not_contains "$out" "Where should your templates live"
+  assert_eq "templates_dir = ~/mine" "$(<"$HOME/.config/fzp/config")" "config kept"
+  assert_eq 1 "$(grep -c '^# Added by the fzp installer$' "$HOME/.bashrc")" "marker lines"
+}
+
+test_install_keeps_private_fzf() {
+  run_installer >/dev/null
+  printf '#!/bin/sh\nexit 0\n' >"$HOME/.local/lib/fzp/fzf"
+  chmod +x "$HOME/.local/lib/fzp/fzf"
+  rm "$HOME/stubs/fzf"
+  run_installer >/dev/null
+  assert_file "$HOME/.local/lib/fzp/fzf"
+}
+
+test_install_bashrc_symlink() {
+  mkdir -p "$HOME/dotfiles"
+  printf 'export A=1' >"$HOME/dotfiles/bashrc"
+  ln -s "$HOME/dotfiles/bashrc" "$HOME/.bashrc"
+  run_installer >/dev/null
+  [[ -L "$HOME/.bashrc" ]] || flunk ".bashrc isn't a symlink any more"
+  assert_eq $'export A=1\n# Added by the fzp installer' "$(head -n2 "$HOME/dotfiles/bashrc")" \
+    "line added after a last line without a newline"
+}
+
+test_install_other_fzp_stops() {
+  mkdir -p "$HOME/.local/bin"
+  printf '#!/bin/sh\necho another tool\n' >"$HOME/.local/bin/fzp"
+  chmod +x "$HOME/.local/bin/fzp"
+  local status=0 out
+  out="$(run_installer)" || status=$?
+  assert_eq 1 "$status" status
+  assert_contains "$out" "isn't fzp"
+  assert_eq "another tool" "$("$HOME/.local/bin/fzp")"
+}
+
+test_install_old_fzf_unsupported_cpu() {
+  stub_old_fzf
+  stub uname 'echo riscv64'
+  local out
+  out="$(run_installer)"
+  assert_contains "$out" "too old"
+  assert_contains "$out" "riscv64"
+  assert_file "$HOME/.local/bin/fzp"
+  assert_no_file "$HOME/.local/lib/fzp/fzf"
+}
+
+test_install_fzf_download() {
+  [[ "${FZP_TEST_NETWORK:-}" == 1 ]] || skip_test "needs FZP_TEST_NETWORK=1"
+  rm "$HOME/stubs/fzf"
+  run_installer >"$HOME/out" || { cat "$HOME/out"; flunk "installer failed"; }
+  assert_eq "0.74.5" "$("$HOME/.local/lib/fzp/fzf" --version | cut -d' ' -f1)"
 }
 
 # ---------------------------------------------------------------------------------------------------------------

@@ -1,315 +1,289 @@
 #!/usr/bin/env bash
-# Installs FuzzyPaste (fzp) for the current user, by default under ~/.local: bin/fzp and
-# share/bash-completion/completions/fzp (Tab completion) link back to this folder, so `git pull`
-# here updates fzp. With --copy, lib/fzp/*.sh is copied too and this folder can be deleted.
-# When fzp is already installed, asks whether to replace it or cancel (which changes nothing). Then
-# makes sure fzp is on PATH, creates the config file and offers to copy this folder's templates.
-# Every change to ~/.bashrc is asked first.
+# Installs FuzzyPaste (fzp) for the current user, in ~/.local. Run it from a copy of the repository
+# (./install.sh), or straight from GitHub:
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Oriol35/fzp/main/install.sh)"
+# It asks every question before changing anything. Run it again to update fzp; `fzp uninstall`
+# removes it. Everything below is functions and main runs on the last line, so a download cut short
+# runs nothing.
 set -euo pipefail
 
-src="$(dirname "$(realpath "$0")")"
-prefix="$HOME/.local"
-mode=link
-bashrc="$HOME/.bashrc"
-marker="# Added by the fzp installer"
+repo=Oriol35/fzp
+# The fzf downloaded when this computer has none recent enough. Bumped after testing fzp with it.
+fzf_version=0.74.5
 
 usage() {
   cat <<'EOF'
-Install FuzzyPaste (fzp) for your user.
+Install FuzzyPaste (fzp) for your user, in ~/.local.
 
-  ./install.sh               install fzp into ~/.local, linked to this folder: "git pull" here updates it
-  ./install.sh --copy        copy fzp instead, so this folder can be deleted afterwards
-  ./install.sh --prefix DIR  install into DIR instead of ~/.local
-  ./install.sh --uninstall   remove fzp, the same as ./uninstall.sh (your templates are kept)
-  ./install.sh --help        show this help
+  install.sh                   install, or update, fzp
+  install.sh --version X.Y.Z   install that release of fzp (when not run from a copy of the repository)
+  install.sh --help            show this help
+
+Remove it with: fzp uninstall
 EOF
 }
 
-ok() { printf '\e[32m ✓\e[0m %s\n' "$*"; }
-warn() { printf '\e[33m ⚠\e[0m %s\n' "$*"; }
 die() { printf '\e[31m ✗\e[0m %s\n' "$*" >&2; exit 1; }
 title() { printf '\n\e[1;36m %s\e[0m\n\n' "$*"; }
+cancel() { printf '\n Install cancelled. Nothing was changed.\n\n'; exit 0; }
 
-# Yes/no question; $2 is the answer Enter gives (y or n). Without a terminal nothing optional is
-# changed, so the answer is always no.
-ask() {
-  local answer hint="[Y/n]"
-  [[ "$2" == n ]] && hint="[y/N]"
-  [[ -t 0 ]] || return 1
-  read -r -p "   $1 $hint " answer || answer=n
-  [[ "${answer:-$2}" == [yY]* ]]
-}
-
-shorten_home() {
-  if [[ "$1" == "$HOME" || "$1" == "$HOME/"* ]]; then printf '~%s' "${1#"$HOME"}"; else printf '%s' "$1"; fi
-}
-
-# $1 is what's cancelled: Install (the default) or Uninstall
-cancel() {
-  printf '\n   %s cancelled. Nothing was changed.\n\n' "${1:-Install}"
-  exit 0
-}
-
-# Prints the first fzf option or action fzp uses that the fzf at $1 rejects (an older fzf exits
-# with status 2), and fails when it accepts them all
-fzf_too_old() {
-  local status=0 error
-  error="$("$1" --filter=x --style=full --footer=x --footer-label=x --freeze-left=1 --gutter=x \
-    --ghost=x --no-input --list-label=x --input-label=x --header-first --info=inline-right \
-    --tabstop=1 --no-clear --layout=reverse-list \
-    --bind 'tab:transform-footer(echo),alt-enter:print-query,change:refresh-preview' \
-    </dev/null 2>&1 >/dev/null)" || status=$?
-  (( status == 2 )) && printf '%s' "$error"
-}
-
-# Option 1 is $1, option 2 cancels. Returns when 1 is chosen.
-choose_or_cancel() {
-  local answer
-  printf '     1) %s\n     2) Cancel the install, without changing anything\n' "$1"
-  [[ -t 0 ]] || die "Run the installer in a terminal to choose. Nothing was changed."
-  while true; do
-    read -r -p "   Choose [1/2]: " answer || cancel
-    case "$answer" in
-      1) return ;;
-      2) cancel ;;
-    esac
-  done
-}
-
-# An fzp already on this computer: at the install location (this install replaces it), or somewhere
-# else on PATH. Asks whether to go on or cancel, before anything is changed.
-check_existing() {
-  local where="" target other
-  if [[ -L "$bin_dst" ]]; then
-    target="$(readlink "$bin_dst")"
-    where="$(shorten_home "$bin_dst"), linked to $(shorten_home "$(dirname "$(dirname "$target")")")"
-    [[ -e "$bin_dst" ]] || where+=" (that folder is gone)"
-  elif [[ -e "$bin_dst" ]]; then
-    grep -qs 'FuzzyPaste' "$bin_dst" ||
-      die "$(shorten_home "$bin_dst") already exists and isn't fzp, so it's left alone. Use --prefix to install elsewhere."
-    where="$(shorten_home "$bin_dst")"
-  fi
-  if [[ -n "$where" ]]; then
-    warn "fzp is already installed: $where"
-    choose_or_cancel "Replace it with the fzp in $(shorten_home "$src")"
-    echo
-  fi
-
-  other="$(type -P fzp || true)"
-  if [[ -n "$other" && "$other" != "$bin_dst" ]]; then
-    warn "There's another fzp at $(shorten_home "$other"), which this install doesn't touch."
-    choose_or_cancel "Install into $(shorten_home "$prefix/bin") anyway, keeping both"
-    echo
-  fi
-}
-
-check_requirements() {
-  local t
+# Checks what's needed before anything else runs: not root, bash 4.4+, and the tools fzp uses
+check_basics() {
+  local tool
+  (( EUID != 0 )) || die "Run the installer as your normal user, not as root: fzp is installed per user."
   (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )) ||
     die "fzp needs bash 4.4 or newer (this is $BASH_VERSION)."
-  for t in sed find iconv tput realpath; do
-    command -v "$t" >/dev/null || die "fzp needs \"$t\", which isn't installed."
+  for tool in sed find awk tar sha256sum iconv tput realpath; do
+    command -v "$tool" >/dev/null || die "fzp needs \"$tool\", which isn't installed."
   done
-  command -v fzf >/dev/null ||
-    die "fzp needs fzf. Install a recent version from https://github.com/junegunn/fzf/releases"
-  local error
-  if error="$(fzf_too_old fzf)"; then
-    die "fzf $(fzf --version | cut -d' ' -f1) is too old for fzp ($error). Install a recent version from https://github.com/junegunn/fzf/releases"
-  fi
-  ok "fzf $(fzf --version | cut -d' ' -f1)"
+}
 
-  if command -v gawk >/dev/null || awk --version 2>/dev/null | grep -q 'GNU Awk'; then
-    ok "GNU awk"
-  else
-    warn "GNU awk isn't installed: search highlights in the preview become case-sensitive. Install \"gawk\" to fix it."
+need_curl() { command -v curl >/dev/null || die "The installer needs \"curl\" to download, which isn't installed."; }
+
+# Sets src to a folder with fzp's files: the copy of the repository this script is in, or else the
+# release downloaded from GitHub into the temporary folder $work ($1: the version, or empty for the latest)
+find_source() {
+  local self="${BASH_SOURCE[0]:-}" dir tag url
+  if [[ -n "$self" && -f "$self" ]]; then
+    dir="$(cd "$(dirname "$self")" && pwd)"
+    if [[ -f "$dir/bin/fzp" && -f "$dir/lib/fzp/common.sh" ]]; then
+      src="$dir"
+      return
+    fi
   fi
-  if command -v wl-copy >/dev/null || command -v xclip >/dev/null || command -v xsel >/dev/null; then
-    ok "clipboard tool"
+  need_curl
+  if [[ -n "$1" ]]; then
+    tag="v${1#v}"
   else
-    warn "No clipboard tool found: install wl-clipboard (Wayland) or xclip (X11), or fzp can't copy."
+    # github.com/<repo>/releases/latest redirects to the latest release's page, which ends in its tag
+    url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest")" ||
+      die "Couldn't reach GitHub to find the latest fzp release."
+    tag="${url##*/}"
+    [[ "$tag" == v[0-9]* ]] || die "Couldn't find an fzp release on GitHub."
+  fi
+  echo " Downloading fzp $tag…"
+  curl -fsSL "https://github.com/$repo/archive/refs/tags/$tag.tar.gz" | tar xz -C "$work" ||
+    die "Couldn't download fzp $tag."
+  src="$(find "$work" -mindepth 1 -maxdepth 1 -type d -name 'fzp-*' | head -n1)"
+  [[ -f "$src/bin/fzp" ]] || die "The fzp $tag download doesn't look like fzp."
+}
+
+# The fzf release name for this computer's processor, or fails
+fzf_arch() {
+  case "$(uname -m)" in
+    x86_64 | amd64) echo amd64 ;;
+    aarch64 | arm64) echo arm64 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Downloads fzf $fzf_version for processor $1 into $work/fzf, checked against the release's checksums
+download_fzf() {
+  local base="https://github.com/junegunn/fzf/releases/download/v$fzf_version" file="fzf-$fzf_version-linux_$1.tar.gz"
+  need_curl
+  mkdir -p "$work/fzf-download"
+  (
+    cd "$work/fzf-download"
+    curl -fsSLO "$base/$file" && curl -fsSLO "$base/fzf_${fzf_version}_checksums.txt" &&
+      grep -F "  $file" "fzf_${fzf_version}_checksums.txt" | sha256sum -c --status &&
+      tar xzf "$file" fzf
+  ) || die "Couldn't download fzf $fzf_version, or it didn't match its checksum. Nothing was changed."
+  mv "$work/fzf-download/fzf" "$work/fzf"
+  ok_line "Downloaded fzf $fzf_version (checksum verified)"
+}
+
+# Version of the fzp in folder $1
+source_version() { sed -n 's/^FZP_VERSION="\(.*\)"$/\1/p' "$1/bin/fzp"; }
+
+# An fzp already installed here: offer to update it. Something else called fzp there: stop.
+check_existing() {
+  local old other status=0
+  if [[ -e "$install_bin" || -L "$install_bin" ]]; then
+    [[ -L "$install_bin" ]] || grep -qs FuzzyPaste "$install_bin" ||
+      die "$(shorten_home "$install_bin") already exists and isn't fzp, so the installer leaves it alone."
+    old="$("$install_bin" --version 2>/dev/null | awk '{ print $2 }')"
+    ask "Update fzp ${old:-(unknown version)} to $(source_version "$src")?" y || status=$?
+    (( status == 0 )) || cancel
+  fi
+  other="$(type -P fzp || true)"
+  if [[ -n "$other" && "$other" != "$install_bin" ]]; then
+    warn_line "There's another fzp at $(shorten_home "$other"), which comes first on your PATH."
+  fi
+}
+
+# Decides where fzp's fzf comes from, in fzf_plan: keep (the one a previous install downloaded),
+# system, download, or none (fzp won't run until a recent fzf is installed)
+plan_fzf() {
+  local error arch status=0
+  if [[ -x "$install_lib/fzf" ]] && fzf_check "$install_lib/fzf" >/dev/null; then
+    fzf_plan=keep
+    ok_line "fzf $("$install_lib/fzf" --version | cut -d' ' -f1) (downloaded for fzp)"
+    return
+  fi
+  if command -v fzf >/dev/null; then
+    if error="$(fzf_check fzf)"; then
+      fzf_plan=system
+      ok_line "fzf $(fzf --version | cut -d' ' -f1)"
+      return
+    fi
+    warn_line "Your fzf $(fzf --version | cut -d' ' -f1) is too old for fzp, which needs 0.67 or newer ($error)."
+  else
+    warn_line "fzf isn't installed. fzp needs fzf 0.67 or newer."
+  fi
+  fzf_plan=none
+  if ! arch="$(fzf_arch)"; then
+    warn_line "There's no fzf download for this processor ($(uname -m)). Install fzf 0.67 or newer from https://github.com/junegunn/fzf, then run fzp."
+    return
+  fi
+  ask "Download fzf $fzf_version for fzp? It goes into ~/.local/lib/fzp, not on your PATH, so it doesn't replace yours." y ||
+    status=$?
+  (( status != 2 )) || cancel
+  if (( status == 0 )); then
+    fzf_plan=download
+  else
+    warn_line "fzp won't run until fzf 0.67 or newer is installed."
+  fi
+}
+
+check_extras() {
+  if tool="$(clipboard_tool)"; then
+    ok_line "Clipboard: $tool"
+  else
+    warn_line "No clipboard tool found: install wl-clipboard (Wayland), xclip or xsel (X11), or fzp can't copy."
   fi
   if [[ -f /usr/share/bash-completion/bash_completion || -f /etc/bash_completion ]]; then
-    ok "bash-completion"
+    ok_line "bash-completion"
   else
-    warn "The bash-completion package isn't installed, so Tab won't complete fzp commands."
+    warn_line "The bash-completion package isn't installed, so Tab won't complete fzp's commands."
   fi
 }
 
-# Paths of an installation under $prefix
-set_paths() {
-  bin_dst="$prefix/bin/fzp"
-  lib_dst="$prefix/lib/fzp"
-  comp_dst="$prefix/share/bash-completion/completions/fzp"
+# Only on a first install (no config file yet): where the templates go, and whether to copy the examples
+plan_templates() {
+  local examples existing status=0
+  new_config=n copy_examples=n
+  [[ -f "$config_file" ]] && return
+  new_config=y
+  printf '\n Where should your templates live? Press Enter for the default, or type another folder.\n'
+  ask_folder "$templates_dir" || cancel
+  templates_dir="$answer_dir"
+  [[ -d "$src/examples" ]] || return 0
+  examples="$(find "$src/examples" -mindepth 2 -maxdepth 2 -type f | wc -l)"
+  (( examples > 0 )) || return 0
+  existing="$(count_templates "$templates_dir")"
+  ask "Copy the $examples example templates into it? Files already there are kept." \
+    "$( (( existing == 0 )) && echo y || echo n)" || status=$?
+  (( status != 2 )) || cancel
+  (( status == 0 )) && copy_examples=y
+  return 0
 }
 
-# Removes what a previous install put under $prefix, and nothing else called fzp
-remove_installed() {
-  if [[ -L "$bin_dst" ]] || grep -qs 'FuzzyPaste' "$bin_dst"; then rm -f "$bin_dst"; fi
-  if [[ -L "$lib_dst" ]]; then
-    rm -f "$lib_dst"
-  elif [[ -f "$lib_dst/common.sh" ]]; then
-    rm -rf "$lib_dst"
+# Whether to add ~/.local/bin to PATH in ~/.bashrc
+plan_path() {
+  local status=0
+  add_path=n
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) return ;;
+  esac
+  if grep -qsF "$bashrc_marker" "$bashrc_file"; then
+    ok_line "~/.bashrc already adds ~/.local/bin to PATH (active in new terminals)"
+    return
   fi
-  if [[ -L "$comp_dst" ]] || grep -qs '_fzp' "$comp_dst"; then rm -f "$comp_dst"; fi
+  ask "~/.local/bin isn't on your PATH. Add it in ~/.bashrc?" y || status=$?
+  (( status != 2 )) || cancel
+  (( status == 0 )) && add_path=y
+  return 0
 }
 
 install_files() {
-  remove_installed
-  mkdir -p "$prefix/bin" "$(dirname "$comp_dst")"
-  if [[ "$mode" == link ]]; then
-    # bin/fzp finds its lib/ through the link, so only the command and completion are linked.
-    # The link needs bin/fzp to be executable, which a download as a zip can lose.
-    chmod +x "$src/bin/fzp"
-    ln -s "$src/bin/fzp" "$bin_dst"
-    ln -s "$src/share/bash-completion/completions/fzp" "$comp_dst"
-    ok "Installed $(shorten_home "$bin_dst"), linked to $(shorten_home "$src")"
-  else
-    mkdir -p "$lib_dst"
-    install -m 755 "$src/bin/fzp" "$bin_dst"
-    install -m 644 "$src"/lib/fzp/*.sh "$lib_dst/"
-    install -m 644 "$src/share/bash-completion/completions/fzp" "$comp_dst"
-    ok "Installed $(shorten_home "$bin_dst") (a copy)"
+  local f
+  # A previous install's code goes, its downloaded fzf stays when it's still the one to use
+  if [[ -L "$install_lib" ]]; then
+    rm -f "$install_lib"
+  elif [[ -d "$install_lib" ]]; then
+    find "$install_lib" -mindepth 1 -maxdepth 1 ! -name fzf -exec rm -rf {} +
+    [[ "$fzf_plan" == keep ]] || rm -f "$install_lib/fzf"
   fi
-  ok "Tab completion: $(shorten_home "$comp_dst")"
+  rm -f "$install_bin" "$install_completion"
+  mkdir -p "$(dirname "$install_bin")" "$install_lib" "$(dirname "$install_completion")"
+  install -m 755 "$src/bin/fzp" "$install_bin"
+  install -m 644 "$src"/lib/fzp/*.sh "$install_lib/"
+  install -m 644 "$src/share/bash-completion/completions/fzp" "$install_completion"
+  [[ "$fzf_plan" == download ]] && install -m 755 "$work/fzf" "$install_lib/fzf"
+  ok_line "Installed fzp $(source_version "$src") in $(shorten_home "$install_bin")"
 }
 
-# fzp must be reachable on PATH
-fix_shell() {
-  case ":$PATH:" in
-    *":$prefix/bin:"*) ok "$(shorten_home "$prefix/bin") is on PATH" ;;
-    *)
-      if grep -qsF "$marker" "$bashrc"; then
-        ok "$(shorten_home "$prefix/bin") is added to PATH in ~/.bashrc (active in new terminals)"
-      else
-        warn "$(shorten_home "$prefix/bin") isn't on PATH, so the shell won't find fzp."
-        if ask "Add it to PATH in ~/.bashrc?" y; then
-          printf '\n%s\nexport PATH="%s:$PATH"\n' "$marker" "$prefix/bin" >>"$bashrc"
-          ok "Added $(shorten_home "$prefix/bin") to PATH in ~/.bashrc"
-        fi
-      fi ;;
-  esac
-}
-
-# Creates the config file with `fzp config` when there isn't one
-setup_config() {
-  local path
-  if path="$("$bin_dst" config </dev/null 2>/dev/null)"; then
-    ok "Config file: $(shorten_home "$path")"
-    # A config file from an older fzp: `fzp config` explains what changed and offers to update it
-    if "$bin_dst" help 2>&1 >/dev/null | grep -q . && [[ -t 0 ]]; then
-      "$bin_dst" config || true
-    fi
-  else
-    "$bin_dst" config || true
-  fi
-}
-
-# Offers to copy the templates shipped in this folder's categories/ into the configured templates folder
-copy_templates() {
-  local templates_dir count existing
-  [[ -d "$src/categories" ]] || return 0
-  count="$(find "$src/categories" -mindepth 2 -type f \( -name '*.md' -o -name '*.txt' \) | wc -l)"
-  (( count > 0 )) || return 0
-  templates_dir="$(bash -c 'source "$1"; load_config; printf %s "$templates_dir"' _ "$src/lib/fzp/common.sh")"
-  [[ -d "$templates_dir" ]] || return 0
-  [[ "$(realpath "$templates_dir")" == "$(realpath "$src/categories")" ]] && return 0
-  existing="$(find "$templates_dir" -mindepth 2 -type f \( -name '*.md' -o -name '*.txt' \) | wc -l)"
-  local default=y
-  (( existing == 0 )) || default=n
-  if ask "Copy the $count templates in $(shorten_home "$src/categories") into your templates folder $(shorten_home "$templates_dir")? Existing files are kept" "$default"; then
-    local f copied=0
+setup_templates() {
+  local f copied=0 kept=0
+  [[ "$new_config" == y ]] || return 0
+  write_config "$templates_dir"
+  ok_line "Config file: $(shorten_home "$config_file")"
+  mkdir -p "$templates_dir"
+  if [[ "$copy_examples" == y ]]; then
     while IFS= read -r f; do
-      [[ -e "$templates_dir/$f" ]] && continue
-      mkdir -p "$templates_dir/$(dirname "$f")"
-      cp "$src/categories/$f" "$templates_dir/$f"
-      copied=$((copied + 1))
-    done < <(cd "$src/categories" && find . -mindepth 2 -type f \( -name '*.md' -o -name '*.txt' \) -printf '%P\n')
-    ok "Copied $copied templates into $(shorten_home "$templates_dir") ($((count - copied)) already there)"
-  fi
-}
-
-# True when $prefix holds files of an fzp install (the ones remove_installed would remove)
-is_installed() {
-  [[ -L "$bin_dst" || -L "$lib_dst" || -L "$comp_dst" || -f "$lib_dst/common.sh" ]] ||
-    grep -qs 'FuzzyPaste' "$bin_dst" || grep -qs '_fzp' "$comp_dst"
-}
-
-# Asks everything first, then removes fzp, and optionally the PATH line and the config file.
-# The templates folder is never deleted: it's the user's own work, and may hold other files.
-uninstall() {
-  local info config dir count installed=0 remove_path=n remove_config=n
-  # Where the config file and templates are, as fzp itself sees them
-  mapfile -t info < <(bash -c 'source "$1"; load_config
-    printf "%s\n" "$config_file" "$templates_dir" "$(count_templates "$templates_dir")"' _ "$src/lib/fzp/common.sh")
-  config="${info[0]}" dir="${info[1]}" count="${info[2]}"
-
-  title "FuzzyPaste · uninstall"
-  if is_installed; then
-    installed=1
-    printf '   This removes fzp from %s. Your templates are kept.\n\n' "$(shorten_home "$prefix")"
-    # Without a terminal the command itself is the confirmation
-    if [[ -t 0 ]] && ! ask "Uninstall fzp?" y; then cancel Uninstall; fi
+      if [[ -e "$templates_dir/$f" ]]; then
+        kept=$((kept + 1))
+      else
+        mkdir -p "$templates_dir/${f%/*}"
+        cp -- "$src/examples/$f" "$templates_dir/$f"
+        copied=$((copied + 1))
+      fi
+    done < <(cd "$src/examples" && find . -mindepth 2 -maxdepth 2 -type f -printf '%P\n' | sort)
+    ok_line "Copied $(plural "$copied" example) into $(shorten_home "$templates_dir")$( (( kept )) && echo " ($kept already there)")"
   else
-    warn "fzp isn't installed in $(shorten_home "$prefix")."
+    ok_line "Templates folder: $(shorten_home "$templates_dir")"
   fi
-  if [[ -f "$bashrc" ]] && grep -qF "$marker" "$bashrc" &&
-    ask "Also remove the PATH line the installer added to ~/.bashrc?" y; then
-    remove_path=y
-  fi
-  if [[ -f "$config" ]] && ask "Also delete your config file $(shorten_home "$config")?" n; then
-    remove_config=y
-  fi
-  echo
-
-  if (( installed )); then
-    remove_installed
-    ok "Removed fzp from $(shorten_home "$prefix")"
-  fi
-  if [[ "$remove_path" == y ]]; then
-    cp "$bashrc" "$bashrc.fzp-backup"
-    sed -i "/^$marker\$/,+1d" "$bashrc"
-    ok "PATH line removed (backup: ~/.bashrc.fzp-backup)"
-  fi
-  if [[ "$remove_config" == y ]]; then
-    rm -f "$config"
-    rmdir "$(dirname "$config")" 2>/dev/null || true
-    ok "Deleted $(shorten_home "$config")"
-  fi
-  if [[ -d "$dir" ]]; then
-    local what="$count templates"
-    (( count == 1 )) && what="1 template"
-    printf '   Kept your templates: %s (%s)\n' "$(shorten_home "$dir")" "$what"
-  fi
-  [[ "$remove_config" == y || ! -f "$config" ]] || printf '   Kept your config file: %s\n' "$(shorten_home "$config")"
-  echo
 }
 
-while (( $# )); do
-  case "$1" in
-    --copy) mode=copy ;;
-    --prefix) [[ $# -ge 2 ]] || die "--prefix needs a folder"; prefix="$(realpath -m "$2")"; shift ;;
-    --uninstall) mode=uninstall ;;
-    -h | --help) usage; exit 0 ;;
-    *) usage >&2; exit 1 ;;
+add_to_path() {
+  [[ "$add_path" == y ]] || return 0
+  if [[ -f "$bashrc_file" ]]; then
+    cp -- "$bashrc_file" "$bashrc_file.fzp-backup"
+    # A last line without a newline would otherwise run into the marker
+    [[ -s "$bashrc_file" && -n "$(tail -c1 "$bashrc_file")" ]] && echo >>"$bashrc_file"
+  fi
+  printf '%s\n%s\n' "$bashrc_marker" 'export PATH="$HOME/.local/bin:$PATH"' >>"$bashrc_file"
+  ok_line "Added ~/.local/bin to PATH in ~/.bashrc$([[ -f "$bashrc_file.fzp-backup" ]] && echo " (backup: ~/.bashrc.fzp-backup)")"
+}
+
+main() {
+  local version=""
+  while (( $# )); do
+    case "$1" in
+      --version) [[ $# -ge 2 ]] || die "--version needs a version, like 0.1.0"; version="$2"; shift ;;
+      -h | --help) usage; exit 0 ;;
+      *) usage >&2; exit 1 ;;
+    esac
+    shift
+  done
+  check_basics
+  work="$(mktemp -d)"
+  trap 'rm -rf "$work"' EXIT
+
+  title "FuzzyPaste · install"
+  find_source "$version"
+  source "$src/lib/fzp/common.sh"
+  source "$src/lib/fzp/clipboard.sh"
+  load_config
+
+  # Every question first
+  check_existing
+  plan_fzf
+  check_extras
+  plan_templates
+  plan_path
+  echo
+
+  [[ "$fzf_plan" == download ]] && download_fzf "$(fzf_arch)"
+  install_files
+  setup_templates
+  add_to_path
+
+  title "Done"
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) printf '   Run "fzp" to pick a template, or "fzp help" to see where everything is.\n\n' ;;
+    *) printf '   Open a new terminal, then run "fzp" (or "fzp help" to see where everything is).\n\n' ;;
   esac
-  shift
-done
-(( EUID != 0 )) || die "Run the installer as your normal user, not as root: fzp is installed per user."
-set_paths
+}
 
-if [[ "$mode" == uninstall ]]; then
-  uninstall
-  exit 0
-fi
-
-title "FuzzyPaste · install"
-check_existing
-check_requirements
-echo
-install_files
-fix_shell
-echo
-setup_config
-copy_templates
-title "Done"
-printf '   Open a new terminal, then run "fzp" (or "fzp help").\n\n'
+main "$@"
