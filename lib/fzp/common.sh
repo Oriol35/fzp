@@ -110,7 +110,7 @@ ask_folder() {
 count_templates() {
   [[ -d "$1" ]] || { echo 0; return; }
   # From inside the folder, so hidden folders in its own path (~/.local) don't count as hidden
-  (cd "$1" && find . -mindepth 2 -type f -not -path '*/.*' \( -name '*.md' -o -name '*.txt' \) | wc -l)
+  (cd "$1" && template_files | wc -l)
 }
 
 # Moves into the templates folder, or explains how to point fzp at one
@@ -126,18 +126,31 @@ enter_templates_dir() {
   cd "$templates_dir"
 }
 
-# Each subfolder of the templates folder is a category
+# Each folder in the templates folder is a category, except hidden ones and "all", which is the name of the
+# tab with every template
 categories() {
-  find . -mindepth 1 -maxdepth 1 -type d -not -name '.*' -printf '%P\n' | sort
+  find . -mindepth 1 -maxdepth 1 -type d -not -name '.*' -not -name all -printf '%P\n' | sort
 }
 
-# Every template, as <category>/<name>.md (or .txt), relative to the templates folder
+# Every template, as <category>/<file>, relative to the templates folder: the non-empty text files right inside
+# a category folder, with any extension. Hidden files are skipped, and so are binary ones (grep -I, in the C
+# locale so text in another encoding isn't taken for binary).
 template_files() {
-  find . -mindepth 2 -type f -not -path '*/.*' \( -name '*.md' -o -name '*.txt' \) -printf '%P\n' | sort
+  find . -mindepth 2 -maxdepth 2 -type f -not -name '.*' -not -path './.*' -not -path './all/*' -print0 |
+    { LC_ALL=C xargs -0 -r grep -lIZ '' -- || true; } | tr '\0' '\n' | sed 's|^\./||' | sort
+}
+
+# A template's name: its file name without the folder and the extension
+template_name() {
+  local name="${1##*/}"
+  printf '%s' "${name%.*}"
 }
 
 # A leading "#", "##"... and the spaces after it aren't part of a description
 strip_hashes() { sed 's/^#\+ *//'; }
+
+# A template's description: its first line, without the leading "#"s or a Windows line ending
+template_description() { head -n1 "$1" | sed 's/\r$//' | strip_hashes; }
 
 copy_to_clipboard() {
   if [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-copy >/dev/null; then

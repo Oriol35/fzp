@@ -143,6 +143,65 @@ test_no_legacy_words() {
 }
 
 # ---------------------------------------------------------------------------------------------------------------
+# Templates
+
+# A templates folder at ~/t with three real templates and everything that must not count as one
+make_fixture() {
+  mkdir -p "$HOME/t" && cd "$HOME/t"
+  mkdir -p "My Prompts" cmds/deep .git all
+  printf '# Traducció\n\nbody\n' >"My Prompts/traducció.md"
+  printf '# X\necho x\n' >cmds/x.sh
+  printf '# Title\r\nbody\r\n' >cmds/crlf.txt
+  printf '# nested\n' >cmds/deep/nested.md
+  printf '# hidden\n' >cmds/.hidden.md
+  printf '# git\n' >.git/c.md
+  printf '# all\n' >all/a.md
+  printf '\x89PNG\x00\x01' >cmds/logo.png
+  : >cmds/empty.txt
+  printf '# top\n' >top.md
+}
+
+test_categories() {
+  load_fzp
+  make_fixture
+  assert_eq "$(printf '%s\n' cmds "My Prompts" | sort)" "$(categories)"
+}
+
+test_template_files() {
+  load_fzp
+  make_fixture
+  assert_eq "$(printf '%s\n' cmds/crlf.txt cmds/x.sh "My Prompts/traducció.md" | sort)" "$(template_files)"
+}
+
+test_template_files_empty_folder() {
+  load_fzp
+  mkdir -p "$HOME/empty/cat" && cd "$HOME/empty"
+  assert_eq "" "$(template_files)"
+}
+
+test_count_templates() {
+  load_fzp
+  make_fixture
+  cd /
+  assert_eq 3 "$(count_templates "$HOME/t")"
+  assert_eq 0 "$(count_templates "$HOME/missing")"
+}
+
+test_template_name() {
+  load_fzp
+  assert_eq "b.c" "$(template_name a/b.c.md)"
+  assert_eq "Makefile" "$(template_name a/Makefile)"
+  assert_eq "traducció" "$(template_name "My Prompts/traducció.md")"
+}
+
+test_template_description_crlf() {
+  load_fzp
+  make_fixture
+  assert_eq "Title" "$(template_description cmds/crlf.txt)"
+  assert_eq "Traducció" "$(template_description "My Prompts/traducció.md")"
+}
+
+# ---------------------------------------------------------------------------------------------------------------
 # Runner
 
 tmp_root="$(mktemp -d)"
