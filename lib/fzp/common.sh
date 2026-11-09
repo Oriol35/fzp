@@ -152,33 +152,6 @@ strip_hashes() { sed 's/^#\+ *//'; }
 # A template's description: its first line, without the leading "#"s or a Windows line ending
 template_description() { head -n1 "$1" | sed 's/\r$//' | strip_hashes; }
 
-copy_to_clipboard() {
-  if [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-copy >/dev/null; then
-    wl-copy
-  elif command -v xclip >/dev/null; then
-    xclip -selection clipboard
-  elif command -v xsel >/dev/null; then
-    xsel --clipboard --input
-  else
-    echo "No clipboard tool found (install wl-clipboard or xclip)." >&2
-    return 1
-  fi
-}
-
-# Fails when the clipboard is empty or doesn't hold text
-paste_from_clipboard() {
-  if [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-paste >/dev/null; then
-    wl-paste --no-newline 2>/dev/null
-  elif command -v xclip >/dev/null; then
-    xclip -selection clipboard -o 2>/dev/null
-  elif command -v xsel >/dev/null; then
-    xsel --clipboard --output 2>/dev/null
-  else
-    echo "No clipboard tool found (install wl-clipboard or xclip)." >&2
-    return 1
-  fi
-}
-
 # For fzp add, which mixes fzf screens with plain terminal prompts: take over the whole terminal
 # like vim does for all its steps, and give the previous contents back on exit. (fzf does this by
 # itself for the picker; --height=100% would too, but switches back after each step.)

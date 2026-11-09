@@ -7,6 +7,7 @@ FZP_LIB="$(dirname "$(realpath "$0")")/../lib/fzp"
 FZP_SELF="$(printf '%q' "$(realpath "$0")")"
 
 source "$FZP_LIB/common.sh"
+source "$FZP_LIB/clipboard.sh"
 source "$FZP_LIB/pick.sh"
 source "$FZP_LIB/add.sh"
 source "$FZP_LIB/config.sh"

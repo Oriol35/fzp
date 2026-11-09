@@ -202,6 +202,44 @@ test_template_description_crlf() {
 }
 
 # ---------------------------------------------------------------------------------------------------------------
+# Clipboard
+
+test_clipboard_linux_wayland() {
+  export WAYLAND_DISPLAY=w
+  load_fzp
+  assert_eq wl-copy "$(clipboard_tool)"
+  printf 'héllo\n\n' | copy_to_clipboard
+  printf 'héllo\n\n' | cmp - "$HOME/clipboard"
+}
+
+test_clipboard_wsl_prefers_clip_exe() {
+  export WSL_DISTRO_NAME=Test WAYLAND_DISPLAY=w
+  load_fzp
+  assert_eq clip.exe "$(clipboard_tool)"
+  printf 'héllo\n' | copy_to_clipboard
+  printf 'héllo\n' | iconv -f UTF-8 -t UTF-16LE | cmp - "$HOME/clipboard"
+}
+
+test_clipboard_wsl_paste() {
+  export WSL_DISTRO_NAME=Test
+  stub powershell.exe "printf 'a\r\nb\r\n'"
+  load_fzp
+  paste_from_clipboard >"$HOME/pasted"
+  printf 'a\nb\n' | cmp - "$HOME/pasted"
+}
+
+test_clipboard_none() {
+  rm "$HOME/stubs/wl-copy" "$HOME/stubs/clip.exe"
+  export WAYLAND_DISPLAY=w WSL_DISTRO_NAME=Test PATH="$HOME/stubs"
+  load_fzp
+  local status=0 message
+  clipboard_tool >/dev/null || status=$?
+  assert_eq 1 "$status" "clipboard_tool status"
+  message="$(echo x | copy_to_clipboard 2>&1)" && flunk "copy_to_clipboard should fail"
+  assert_contains "$message" xsel
+}
+
+# ---------------------------------------------------------------------------------------------------------------
 # Runner
 
 tmp_root="$(mktemp -d)"
