@@ -122,14 +122,10 @@ count_templates() {
   (cd "$1" && template_files | wc -l)
 }
 
-# Moves into the templates folder, or explains how to point fzp at one
+# Moves into the templates folder, or explains how to set one up
 enter_templates_dir() {
   if [[ ! -d "$templates_dir" ]]; then
-    if [[ -f "$config_file" ]]; then
-      echo "fzp: the templates folder $templates_dir doesn't exist. Create it, or change \"templates_dir\" in $config_file (\"fzp config\" shows where it is)." >&2
-    else
-      echo "fzp: the templates folder $templates_dir doesn't exist, and there is no config file yet. Run \"fzp config\" to create one." >&2
-    fi
+    echo "fzp: the templates folder $(shorten_home "$templates_dir") doesn't exist. Create it, or choose another one with \"fzp config\"." >&2
     exit 1
   fi
   cd "$templates_dir"

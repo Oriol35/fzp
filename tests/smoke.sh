@@ -82,7 +82,16 @@ test_help_without_config() {
   local out
   out="$("$root/bin/fzp" -h)"
   assert_contains "$out" "~/.config/fzp/config (not created yet)"
-  assert_contains "$out" "Templates folder: ~/.local/share/fzp (0 templates)"
+  assert_contains "$out" "Templates folder: ~/.local/share/fzp (doesn't exist yet)"
+}
+
+test_missing_templates_folder_message() {
+  write_raw_config 'templates_dir = ~/gone'
+  local out status=0
+  out="$("$root/bin/fzp" 2>&1)" || status=$?
+  assert_eq 1 "$status" status
+  assert_contains "$out" "the templates folder ~/gone doesn't exist"
+  assert_contains "$out" '"fzp config"'
 }
 
 test_unknown_command() {

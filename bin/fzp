@@ -18,8 +18,9 @@ source "$FZP_LIB/uninstall.sh"
 
 # The commands, then where the config file and the templates are
 usage() {
-  local config_state=""
+  local config_state="" templates_state="doesn't exist yet"
   [[ -f "$config_file" ]] || config_state=" (not created yet)"
+  [[ -d "$templates_dir" ]] && templates_state="$(plural "$(count_templates "$templates_dir")" template)"
   cat <<EOF
 FuzzyPaste: copy long text you paste often (prompts, commands, replies) to the clipboard.
 
@@ -31,7 +32,7 @@ FuzzyPaste: copy long text you paste often (prompts, commands, replies) to the c
   fzp --version    show the version (also -V)
 
 Config file:      $(shorten_home "$config_file")$config_state
-Templates folder: $(shorten_home "$templates_dir") ($(plural "$(count_templates "$templates_dir")" template))
+Templates folder: $(shorten_home "$templates_dir") ($templates_state)
 EOF
 }
 
