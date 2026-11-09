@@ -61,6 +61,44 @@ test_help_runs() {
   assert_contains "$out" "fzp add"
 }
 
+test_version() {
+  assert_eq "fzp 0.1.0" "$("$root/bin/fzp" --version)"
+  assert_eq "fzp 0.1.0" "$("$root/bin/fzp" -V)"
+}
+
+test_help_shows_folders() {
+  write_raw_config 'templates_dir = ~/t'
+  mkdir -p "$HOME/t/a" && printf '# x\ny\n' >"$HOME/t/a/x.md"
+  local out
+  out="$("$root/bin/fzp" --help)"
+  assert_contains "$out" "fzp uninstall"
+  assert_contains "$out" "Config file:      ~/.config/fzp/config"$'\n'
+  assert_contains "$out" "Templates folder: ~/t (1 template)"
+}
+
+test_help_without_config() {
+  local out
+  out="$("$root/bin/fzp" -h)"
+  assert_contains "$out" "~/.config/fzp/config (not created yet)"
+  assert_contains "$out" "Templates folder: ~/.local/share/fzp (0 templates)"
+}
+
+test_unknown_command() {
+  local status=0
+  "$root/bin/fzp" nope 2>/dev/null || status=$?
+  assert_eq 1 "$status"
+}
+
+test_completion() {
+  source "$root/share/bash-completion/completions/fzp"
+  COMP_WORDS=(fzp un) COMP_CWORD=1
+  _fzp
+  assert_eq uninstall "${COMPREPLY[*]}"
+  COMP_WORDS=(fzp -) COMP_CWORD=1
+  _fzp
+  assert_eq "-h --help -V --version" "${COMPREPLY[*]}"
+}
+
 # ---------------------------------------------------------------------------------------------------------------
 # Config
 

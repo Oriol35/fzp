@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# FuzzyPaste: copy LLM prompt templates to the clipboard, and add new ones.
+# FuzzyPaste: copy long text you paste often (prompts, commands, replies) to the clipboard.
 set -euo pipefail
+
+# Set when a release is tagged; the installer reads this line
+FZP_VERSION="0.1.0"
 
 FZP_LIB="$(dirname "$(realpath "$0")")/../lib/fzp"
 # How fzf calls back into this script (tabs, list reloads, preview)
@@ -12,14 +15,22 @@ source "$FZP_LIB/pick.sh"
 source "$FZP_LIB/add.sh"
 source "$FZP_LIB/config.sh"
 
+# The commands, then where the config file and the templates are
 usage() {
-  cat <<'EOF'
-FuzzyPaste: copy LLM prompt templates to the clipboard.
+  local config_state=""
+  [[ -f "$config_file" ]] || config_state=" (not created yet)"
+  cat <<EOF
+FuzzyPaste: copy long text you paste often (prompts, commands, replies) to the clipboard.
 
-  fzp          pick a template and copy it
-  fzp add      save a new template into a category
-  fzp config   show the settings, change the templates folder
-  fzp help     show this help (also -h, --help)
+  fzp              pick a template and copy it
+  fzp add          save a new template into a category
+  fzp config       show the settings, change the templates folder
+  fzp uninstall    remove fzp
+  fzp help         show this help (also -h, --help)
+  fzp --version    show the version (also -V)
+
+Config file:      $(shorten_home "$config_file")$config_state
+Templates folder: $(shorten_home "$templates_dir") ($(plural "$(count_templates "$templates_dir")" template))
 EOF
 }
 
@@ -43,6 +54,7 @@ case "${1:-}" in
   add) add_main ;;
   config) config_main ;;
   -h | --help | help) usage ;;
+  -V | --version) echo "fzp $FZP_VERSION" ;;
   # Called back by fzf while the picker is open
   _list) enter_templates_dir; list ;;
   _tabs) enter_templates_dir; tabs ;;

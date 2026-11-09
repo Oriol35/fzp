@@ -16,6 +16,9 @@ trim() {
   printf '%s' "${s%"${s##*[![:space:]]}"}"
 }
 
+# "1 template", "3 templates"
+plural() { if (( $1 == 1 )); then echo "1 $2"; else echo "$1 $2s"; fi; }
+
 # The home folder is shown as "~"
 shorten_home() {
   if [[ "$1" == "$HOME" || "$1" == "$HOME/"* ]]; then printf '~%s' "${1#"$HOME"}"; else printf '%s' "$1"; fi
