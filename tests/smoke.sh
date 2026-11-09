@@ -340,6 +340,61 @@ test_name_taken() {
 }
 
 # ---------------------------------------------------------------------------------------------------------------
+# fzp config
+
+# ~/old with three templates, a binary file and a loose file; "~/new space" already has a/two.md
+make_move_fixture() {
+  mkdir -p "$HOME/old/a" "$HOME/old/b" "$HOME/new space/a"
+  printf '# one\n1\n' >"$HOME/old/a/one.md"
+  printf '# two\n2\n' >"$HOME/old/a/two.md"
+  printf '# three\n3\n' >"$HOME/old/b/three.txt"
+  printf '# run\necho hi\n' >"$HOME/old/b/run.sh"
+  printf '%%PDF\x00' >"$HOME/old/a/notes.pdf"
+  printf 'loose\n' >"$HOME/old/README"
+  printf '# two, already here\n' >"$HOME/new space/a/two.md"
+}
+
+test_left_behind() {
+  load_fzp
+  make_move_fixture
+  assert_eq "$(printf '%s\n' README a/notes.pdf a/two.md | sort)" \
+    "$(templates_left_behind "$HOME/old" "$HOME/new space")"
+}
+
+test_move_templates() {
+  load_fzp
+  make_move_fixture
+  move_templates "$HOME/old" "$HOME/new space" >/dev/null
+  assert_file "$HOME/new space/a/one.md"
+  assert_file "$HOME/new space/b/three.txt"
+  assert_file "$HOME/new space/b/run.sh"
+  assert_eq "# two, already here" "$(head -n1 "$HOME/new space/a/two.md")" "kept the new folder's two.md"
+  assert_file "$HOME/old/a/two.md"
+  assert_file "$HOME/old/README"
+  assert_no_file "$HOME/old/b"
+}
+
+test_move_everything_removes_old() {
+  load_fzp
+  mkdir -p "$HOME/old/a"
+  printf '# one\n1\n' >"$HOME/old/a/one.md"
+  move_templates "$HOME/old" "$HOME/new" >/dev/null
+  assert_file "$HOME/new/a/one.md"
+  assert_no_file "$HOME/old"
+  assert_eq "" "$(templates_left_behind "$HOME/new" "$HOME/other")" "nothing would stay behind"
+}
+
+test_config_without_terminal() {
+  local out status=0
+  out="$("$root/bin/fzp" config </dev/null 2>&1)" || status=$?
+  assert_eq 1 "$status" "status without a config file"
+  assert_contains "$out" 'Run "fzp config" in a terminal'
+  write_raw_config 'templates_dir = ~/t'
+  out="$("$root/bin/fzp" config </dev/null)"
+  assert_eq "$HOME/.config/fzp/config" "$out"
+}
+
+# ---------------------------------------------------------------------------------------------------------------
 # Runner
 
 tmp_root="$(mktemp -d)"

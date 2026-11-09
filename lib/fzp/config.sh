@@ -1,50 +1,71 @@
-# `fzp config`: show the config file and the templates folder, and offer to change the folder
-# (moving the templates there too). When there's no config file yet, offer to create one. Every
-# question comes before any change, so cancelling changes nothing.
+# `fzp config`: show the config file and the templates folder, and offer to change the folder,
+# moving the templates there and, if anything is left behind, deleting the old folder. With no
+# config file yet, offer to create one. Every question comes before any change, so cancelling
+# (Ctrl-C or Ctrl-D) changes nothing.
 
 config_nothing() { echo " Nothing was changed."; }
 
 # "1 template", "3 templates"
 plural() { if (( $1 == 1 )); then echo "1 $2"; else echo "$1 $2s"; fi; }
 
+ok_line() { printf '\e[32m ✓\e[0m %s\n' "$*"; }
+warn_line() { printf '\e[33m ⚠\e[0m %s\n' "$*"; }
+
 # Writes the config file pointing at $1 and creates that folder when needed
 save_config() {
   write_config "$1"
-  printf '\n\e[32m ✓\e[0m Saved %s\n' "$(shorten_home "$config_file")"
+  ok_line "Saved $(shorten_home "$config_file")"
   if [[ ! -d "$1" ]]; then
     mkdir -p "$1"
-    printf '\e[32m ✓\e[0m Created the templates folder %s\n' "$(shorten_home "$1")"
+    ok_line "Created the templates folder $(shorten_home "$1")"
   fi
 }
 
-# Moves the templates in folder $1 into folder $2, category by category. A template whose name is
-# already taken in $2 stays where it is. Folders left empty are removed.
+# Everything in folder $1 that would stay there after move_templates "$1" "$2": templates whose
+# place in $2 is taken, and files that aren't templates. One path per line, relative to $1.
+templates_left_behind() {
+  local old="$1" new="$2" f
+  local -A moving=()
+  while IFS= read -r f; do
+    [[ -e "$new/$f" ]] || moving["$f"]=1
+  done < <(cd "$old" && template_files)
+  while IFS= read -r f; do
+    [[ -n "${moving[$f]:-}" ]] || printf '%s\n' "$f"
+  done < <(cd "$old" && find . -mindepth 1 \( -type f -o -type l \) -printf '%P\n') | sort
+}
+
+# Moves the templates in folder $1 to the same place in folder $2, unless that place is taken.
+# Then removes the folders left empty, the old folder included. With $3 = deleting, the old folder
+# is about to be deleted, so what stays there isn't mentioned.
 move_templates() {
-  local from="$1" to="$2" cat_dir category f moved=0 kept=0
-  while IFS= read -r cat_dir; do
-    category="${cat_dir#"$from"/}"
-    mkdir -p "$to/$category"
-    while IFS= read -r f; do
-      if [[ -e "$to/$category/$f" ]]; then
-        kept=$((kept + 1))
-      else
-        mv "$cat_dir/$f" "$to/$category/$f"
-        moved=$((moved + 1))
-      fi
-    done < <(find "$cat_dir" -maxdepth 1 -type f -not -name '.*' \( -name '*.md' -o -name '*.txt' \) -printf '%f\n')
-    rmdir "$cat_dir" 2>/dev/null || true
-  done < <(find "$from" -mindepth 1 -maxdepth 1 -type d -not -name '.*')
-  rmdir "$from" 2>/dev/null || true
-  printf '\e[32m ✓\e[0m Moved %s into %s\n' "$(plural "$moved" template)" "$(shorten_home "$to")"
-  if (( kept )); then
-    printf '\e[33m ⚠\e[0m %s stayed in %s: a template with the same name is already in the new folder.\n' \
-      "$kept" "$(shorten_home "$from")"
+  local old="$1" new="$2" f moved=0 kept=0
+  while IFS= read -r f; do
+    if [[ -e "$new/$f" ]]; then
+      kept=$((kept + 1))
+    else
+      mkdir -p "$new/${f%/*}"
+      mv -- "$old/$f" "$new/$f"
+      moved=$((moved + 1))
+    fi
+  done < <(cd "$old" && template_files)
+  find "$old" -depth -type d -empty -delete 2>/dev/null || true
+  ok_line "Moved $(plural "$moved" template) to $(shorten_home "$new")"
+  if (( kept )) && [[ "${3:-}" != deleting ]]; then
+    warn_line "$kept stayed in $(shorten_home "$old"): the new folder already has a template with the same name."
   fi
+}
+
+# Lists the paths on its input, at most 10, indented
+show_some() {
+  local lines
+  mapfile -t lines
+  printf '     %s\n' "${lines[@]:0:10}"
+  (( ${#lines[@]} <= 10 )) || printf '     …and %d more\n' $(( ${#lines[@]} - 10 ))
 }
 
 # Shows the current settings and offers to change the templates folder
 change_config() {
-  local old="$templates_dir" count move=n status
+  local old="$templates_dir" new count left move=n delete=n status
   count="$(count_templates "$old")"
   printf ' Config file:      %s\n' "$(shorten_home "$config_file")"
   printf ' Templates folder: %s (%s)\n\n' "$(shorten_home "$old")" "$(plural "$count" template)"
@@ -53,22 +74,46 @@ change_config() {
   ask "Change the templates folder?" n || status=$?
   (( status == 0 )) || { config_nothing; return; }
   ask_folder "$old" || { config_nothing; return; }
-  [[ "$answer_dir" != "$old" ]] || { config_nothing; return; }
+  new="$answer_dir"
+  [[ "$new" != "$old" ]] || { config_nothing; return; }
+  if [[ -e "$new" && ! -d "$new" ]]; then
+    warn_line "$(shorten_home "$new") is a file, not a folder."
+    config_nothing
+    return
+  fi
 
   if (( count > 0 )); then
-    if [[ "$answer_dir/" == "$old/"* || "$old/" == "$answer_dir/"* ]]; then
-      printf '\e[33m ⚠\e[0m One folder is inside the other, so your templates can'"'"'t be moved automatically.\n'
+    if [[ "$new/" == "$old/"* || "$old/" == "$new/"* ]]; then
+      warn_line "One folder is inside the other, so your templates can't be moved automatically."
     else
       status=0
-      ask "Move your $(plural "$count" template) to $(shorten_home "$answer_dir")?" y || status=$?
+      ask "Move your $(plural "$count" template) to $(shorten_home "$new")?" y || status=$?
       (( status != 2 )) || { config_nothing; return; }
       (( status == 0 )) && move=y
     fi
   fi
 
-  save_config "$answer_dir"
   if [[ "$move" == y ]]; then
-    move_templates "$old" "$answer_dir"
+    left="$(templates_left_behind "$old" "$new")"
+    if [[ -n "$left" ]]; then
+      echo
+      printf ' These would stay in %s:\n' "$(shorten_home "$old")"
+      show_some <<<"$left"
+      status=0
+      ask "Delete the old folder and everything left in it?" n || status=$?
+      (( status != 2 )) || { config_nothing; return; }
+      (( status == 0 )) && delete=y
+    fi
+  fi
+
+  echo
+  save_config "$new"
+  if [[ "$move" == y ]]; then
+    move_templates "$old" "$new" "$([[ "$delete" == y ]] && echo deleting)"
+    if [[ "$delete" == y && "$old" != / && "$old" != "$HOME" ]]; then
+      rm -rf -- "$old"
+      ok_line "Deleted $(shorten_home "$old")"
+    fi
   elif (( count > 0 )); then
     printf '   Your %s stay in %s.\n' "$(plural "$count" template)" "$(shorten_home "$old")"
   fi
@@ -81,6 +126,7 @@ create_config() {
   (( status == 0 )) || { config_nothing; return; }
   printf '\n Which folder should hold your templates? Press Enter to accept, or edit it.\n'
   ask_folder "$templates_dir" || { config_nothing; return; }
+  echo
   save_config "$answer_dir"
   (( $(count_templates "$answer_dir") > 0 )) || printf '   Run "fzp add" to save your first template.\n'
 }
