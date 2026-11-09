@@ -301,6 +301,45 @@ test_fzf_missing_message() {
 }
 
 # ---------------------------------------------------------------------------------------------------------------
+# fzp add
+
+test_slugify() {
+  load_fzp
+  assert_eq traduccio-nandu "$(printf 'Traducció Ñandú' | slugify)"
+  local out
+  out="$(printf 'a\xffb' | slugify)"
+  [[ -n "$out" ]] || flunk "slugify of invalid UTF-8 is empty"
+}
+
+test_resolve_category() {
+  load_fzp
+  mkdir -p "$HOME/t/My Prompts" && cd "$HOME/t"
+  assert_eq "My Prompts" "$(resolve_category "My Prompts")"
+  assert_eq new-stuff "$(resolve_category "New Stuff")"
+  assert_eq "" "$(resolve_category '!!!')"
+  assert_eq all "$(resolve_category all)" "slug of all (add rejects it)"
+}
+
+test_split_file_name() {
+  load_fzp
+  assert_eq $'deploy-notes\tmd' "$(split_file_name "Deploy Notes")"
+  assert_eq $'backup\tsh' "$(split_file_name backup.SH)"
+  assert_eq $'v1-2-notes\ttxt' "$(split_file_name v1.2.notes.txt)"
+  assert_eq $'name\tmd' "$(split_file_name name.)"
+}
+
+test_name_taken() {
+  load_fzp
+  mkdir -p "$HOME/t/cmds" && cd "$HOME/t"
+  printf '# x\n' >cmds/x.sh
+  printf '# x.y\n' >cmds/x.y.md
+  assert_eq cmds/x.sh "$(name_taken cmds x)"
+  assert_eq cmds/x.y.md "$(name_taken cmds x.y)"
+  name_taken cmds y && flunk "y isn't taken"
+  return 0
+}
+
+# ---------------------------------------------------------------------------------------------------------------
 # Runner
 
 tmp_root="$(mktemp -d)"
